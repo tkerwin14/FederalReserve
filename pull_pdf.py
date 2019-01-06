@@ -1,109 +1,89 @@
-'''
-Program: pull_pdf.py
-Author: Tess Kerwin
-Date Created: 11/8/2017
-Purpose: 
-'''
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Jan  5 12:46:06 2019
 
-import requests
+@author: tessk
+"""
+
+import requests 
+from bs4 import BeautifulSoup
 import os
-from datetime import date
-from datetime import timedelta
-import pdb
-
-baseUrl = "https://www.federalreserve.gov/monetarypolicy/files"
-
-#The dates to start the testing for pdfs: 
-startDates = [{"mnth": 1, "day": 26}, {"mnth": 3, "day": 18}, 
-              {"mnth": 4, "day": 29}, {"mnth": 6, "day": 24}, 
-              {"mnth": 8, "day": 5},  {"mnth": 9, "day": 16}, 
-              {"mnth": 10, "day": 28}, {"mnth": 12, "day": 16}]
 
 
+def pullYearPage(yearStr): 
+    '''
+    Parameters: 
+    yearStr - string - a 4 character string of the year you want to pull
+    Returns a BeautifulSoup object with the page from the Fed Board pulled.
+    '''
+    #Create the urL:
+    baseUrl = "https://www.federalreserve.gov/monetarypolicy/fomchistorical" 
+    url = baseUrl + yearStr + ".htm" 
+    #Try to get the page:
+    res = requests.get(url)
+    #Convert HTML into bs
+    if (res.status_code == 200): 
+        return BeautifulSoup(res.text, features="lxml")
+    else: 
+        return None
+
+
+def findTranscriptUrls(bs): 
+    '''
+    Parameters: 
+    bs - BeautifulSoup - the beautiful soup object of the page year
+    Returns a list of the meeting transcript urls for that year
+    '''
+    #Get all the links:
+    aLinks = bs.find_all("a")
+    aHref = [x.get('href') for x in aLinks]
+    aHref = [x for x in aHref if x != None]
+    #Subset to the files: 
+    fileUrl = "/monetarypolicy/files/"
+    aHref = [x for x in aHref if x.startswith(fileUrl)]
+    aHref = [x for x in aHref if x[-11:] == "meeting.pdf"]
+    assert len(aHref) >= 8
+    return aHref
 
 def savePDF(pdfName): 
     '''
-    Parameters - pdfName - string 
-    Returns a boolean depending on whether we could download the PDF
+    Parameters: 
+    pdfName - string - the name of the pdf you want to pull
+    Returns a boolean depending on whether we could download the PDF.
     '''
+    #Creates an output directory if necessary: 
+    if os.path.isdir("./files/") == False:
+        os.mkdir("./files/")
     #Tries to fetch URL: 
-    url = os.path.join(baseUrl, pdfName)
+    baseUrl = "https://www.federalreserve.gov"
+    url = baseUrl + pdfName
     response = requests.get(url)
     #If success, download the contents and return true, otherwise false
+    fileName = pdfName.split("/")[-1]
     if (response.status_code == 200):
-        with open(os.path.join("./files/", pdfName), "wb") as f:
+        with open(os.path.join("./files/", fileName), "wb") as f:
             f.write(response.content)
         return True
     else: 
         return False 
-    
-def checkDays(startDt, plus, num): 
-    '''
-    Parameters: startDt - date object - date we want to start testing
-                plus - boolean - whether we should go forward or backward
-                num - int - the number of days to go forward/backward
-    Tests out the days for the FOMC meeting by trying to download the PDF, continues 
-    until it either finds it or number of days runs out, returns a boolean for the 
-    whether we were successful. 
-    '''
-    dt = startDt
-    foundDownload = False
-    cnt = 0
-    while (~foundDownload) & (cnt < num): 
-        dateCheck = str(dt.year) + str(dt.month).zfill(2) + str(dt.day).zfill(2)
-        meetingPdf = "FOMC" + dateCheck + "meeting.pdf"
-        foundDownload = savePDF(meetingPdf)
-        dt = dt + timedelta(days=1) if plus else dt - timedelta(days=1)
-        cnt = cnt + 1
-    return foundDownload
-        
 
-def pullYear(year): 
+def pullYears(startYear, endYear): 
     '''
-    Parameters:  year - string 
-    Loops through all the startdates, tries to download the pdfs for each, 
-    returns a list of any dates that were not successfully downloaded
-    '''
-    unfound = [] 
-    for dt in startDates: 
-        dtCheck = date(year, dt["mnth"], dt["day"])
-        foundDownload = checkDays(dtCheck, True, 15)
-        #A bit clunky, but then check the days going backward
-        if (foundDownload == False): 
-            foundDownloadNeg = checkDays(dtCheck, False, 15)
-            if (foundDownloadNeg == False): 
-                unfound.append(dtCheck)
-    return unfound
-
-
-def pullDates(dtLst): 
-    '''
-    Parameters - dtLst - the list of dates you want to check
-    Same as pullYear except we have a specific date with attached year in mind.
+    Parameters: 
+    startYear - int - the year you want to start the pull
+    endYear - int - the year you want to end the pull
+    Returns the list of pdf names along with a boolean about whether the file
+    was sucessfully download.
     '''
     unfound = []
-    for dt in dtLst:
-        foundDownload = checkDays(dt, True, 30)
-        if (foundDownload == False): 
-            foundDownloadNeg = checkDays(dt, False, 30)
-            if (foundDownloadNeg == False):
-                unfound.append(dt)
-    return unfound
-
-
-def pullYears(): 
-    '''
-    Loops through all years, pulls the PDFs in each one, returns a list of
-    any problem dates.
-    '''
-    unfound = []
-    years = range(1990, 2012)
+    years = range(startYear, endYear + 1)
     for year in years: 
-        unFoundYear = pullYear(year)
-        unfound.extend(unFoundYear)
+        yearbs = pullYearPage(str(year))
+        pdfUrls = findTranscriptUrls(yearbs)
+        saveUrl = [savePDF(url) for url in pdfUrls]
+        unfoundUrls = [{"fileName": pdfUrls[i], "saved": saveUrl[i]} for i in range(0, len(pdfUrls))]
+        unfound.extend(unfoundUrls)
     return unfound
     
-firstPull = pullYears()
-secondPull = pullDates(firstPull)
-assert len(secondPull) == 0
-            
+
+pdfLst = pullYears(1990, 2012)
